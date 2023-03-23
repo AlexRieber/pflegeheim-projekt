@@ -1,0 +1,282 @@
+---
+title: "Standortwahl eines Pflegeheims im Raum Ulm"
+output: 
+  flexdashboard::flex_dashboard:
+    social: menu
+    orientation: rows
+    vertical_layout: fill
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(ggplot2)
+library(tidyverse)
+library(readxl)
+library(kableExtra)
+library(sf)
+library(lubridate)
+library(skimr)
+library(ggpubr)
+library(plotly)
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE, dpi = 300)
+ggplot2::theme_set(theme_minimal())
+gesamtdatensatz <- readRDS("./data/gesamtdatensatz.rds")
+karte_load <- as.character(unzip("./data/VG250_Gemeindegrenzen.zip", list = TRUE)$Name)
+unzip("./data/VG250_Gemeindegrenzen.zip", exdir = "tmp")
+Karte_Gemeinden <- st_read(paste0("./tmp/",karte_load[1]))
+unlink("tmp", recursive = TRUE)
+# Install thematic and un-comment for themed static plots (i.e., ggplot2)
+# thematic::thematic_rmd()
+```
+
+
+Überblick
+===================================== 
+
+Column {.sidebar data-width=800}
+-------------------------------------
+
+### Motivation
+
+Über die letzen Jahrzehnte ist die Lebenserwartung der Menschen in Deutschland stetig angestiegen, bedingt durch medizinischen Fortschritt und veränderte Lebensbedingungen.
+Doch je Älter eine Gesellschaft wird, desto mehr Personen sind in dieser Gesellschaft auf Pflege angewiesen. So stieg beispielsweise die Anzahl der Pflegebedürftigen Personen (nach SGB XI) von 2,02 Mio. Personen in 1999 auf 4,13 Mio. Personen in 2019 ( [Quelle](https://www.destatis.de/DE/Themen/Querschnitt/Demografischer-Wandel/Hintergruende-Auswirkungen/demografie-pflege.html) ). Es ist davon auszugehen, dass dieser Markt immer weiter wächst und die Überalterung der Gesellschaft weiter zunimmt. 
+Laut statistischem Bundesamt erfolgt die Pflege hauptsächlich zuhause: 80% der pflegebedürftigen Personen werden zuhause versorgt (56% von Angehörigen und 24% von ambulanten Pflegediensten). Doch durch die rasant gestiegene Anzahl an Pflegebedürftigen in den letzten Jahren ist die Nachfrage nach Plätzen in Pflegeheimen ebenfalls stark angestiegen ( [Quelle](https://www.statistik-bw.de/SozSicherung/Pflege/15163010.tab?R=LA) ). Immer mehr private Anbieter treten in den Markt ein, um einen Teil der wachsenden Nachfrage zu bedienen. 
+
+### Aufgabe
+
+In diesem Projekt sollten die Studierenden sich in die Lage eines privaten Pflegeheims für Seniorinnen und Senioren versetzen, welches im Raum Ulm einen Standort eröffnen möchte. Dabei sollten sie die Entscheider mit einer fundierten Datenanalyse zur Standortwahl für das Pflegeheim unterstützen. In diesem Projekt werden sowohl Faktoren betrachtet, welche die Nachfrage nach Pflegeheimplätzen treiben, als auch Faktoren, welche die Kostensseite der Pflegeheimbetreiber beeinflussen.
+
+### Deskriptive Tabelle
+
+Die Studierenden sollten die Daten von Exaris Solutions aufarbeiten und anschließend einen deskriptiven Überblick über die Daten geben. Dabei sollten sie sich fünf Variablen heraussuchen, die sie näher beschrieben sollten (in der Tabelle farblich markiert):
+
+```{r}
+aufgabe10 <- gesamtdatensatz |> 
+  select( c(arbeitslosenquote, aktueller_mietpreis, grundsteuer_b_hebesatz, gewerbesteuer_hebesatz, wohnungen_in_wohngebauden_art_der_wohnungsnutzung_zu_wohnzwecken_vermietet_auch_mietfrei, wohnungen_in_wohngebauden_art_der_wohnungsnutzung_leer_stehend, insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr, insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre, bevolkerungverwitwet_eingetr_lebenspartner_in_verstorben, pendlersaldo_uber_gemeindegrenze, sozialversicherungspfl_beschaftigte_wohnort, bodenflache_erholungsflache_insgesamt, bevolkerung_insgesamt)) |> 
+#  mutate( aktueller_mietpreis = ifelse( aktueller_mietpreis == 0, NA, aktueller_mietpreis)) |> 
+  mutate(arbeitslosenquote = arbeitslosenquote * 100) 
+
+colnames(aufgabe10) <- c("Arbeitslosenquote", "Aktueller Mietpreis", "Grundsteuer Hebesatz", "Gewerbesteuer Hebesatz", "Wohnungen vermietet", "Wohnungen leerstehend", "Personen älter 75 Jahre", "Personen 65 - 75 Jahre", "Personen verwitwet", "Pendlersaldo", "Soz. Beschäftigte", "Erholungsfläche", "Bevölkerung gesamt")
+
+aufgabe10 |> 
+  skim_without_charts() |> 
+  select(skim_variable, numeric.mean, numeric.sd, numeric.p0, numeric.p25, numeric.p50, numeric.p75, numeric.p100) |> 
+  kbl(col.names = c("Variable", "Mittelwert", "SD", "Minimum", "P25", "Median", "P75", "Maximum"), 
+      digits = 2) |> 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) |> 
+  row_spec(c(1,2,3,4,10), bold = T, color = "white", background = "#BBBBBB") %>%
+  kable_paper(full_width = TRUE) 
+
+```
+
+
+Row {data-height=450}
+-------------------------------------
+
+### **Hebesätze und Mieten**
+
+```{r}
+
+temp <- gesamtdatensatz |>
+  select( regio_name, grundsteuer_b_hebesatz, gewerbesteuer_hebesatz) |> 
+  pivot_longer(cols = c(grundsteuer_b_hebesatz, gewerbesteuer_hebesatz), names_to = "Variable", values_to = "Hebesatz")  |> 
+  mutate( Variable = case_when(
+    Variable == "gewerbesteuer_hebesatz" ~ "Gewerbesteuer Hebesatz",
+    Variable == "grundsteuer_b_hebesatz" ~ "Grundsteuer B Hebesatz",
+    TRUE ~ Variable
+  ))
+
+
+hebesatz <- temp |>
+  ggplot(aes(x=Hebesatz, y=fct_reorder(regio_name, desc(Hebesatz)))) +
+  geom_bar(aes(fill=Variable), stat="identity", position = "dodge") +
+  scale_fill_viridis_d(    option = "inferno", alpha = 0.8,  begin = 0.1,end = 0.9,  direction = -1,   guide = guide_legend(reverse = T)) +
+  geom_vline(aes(xintercept= gesamtdatensatz |> select(grundsteuer_b_hebesatz) |> summarise(mean(grundsteuer_b_hebesatz, na.rm = T)) |> pull() ), col="black") +
+  geom_vline(aes(xintercept= gesamtdatensatz |> select(gewerbesteuer_hebesatz) |> summarise(mean(gewerbesteuer_hebesatz, na.rm = T)) |> pull()  ), col="#D55E00", linetype="dashed") +
+  geom_text(aes(x=350, y=22, label = "Durchschn.\nGrundsteuer\nHebesatz"), color = "black", hjust=0, size=1.5, alpha = 0.1) +
+  geom_text(aes(x=350, y=18, label = "Durchschn.\nGewerbesteuer\nHebesatz"), color = "#D55E00", hjust=0, size=1.5, alpha = 0.1) +
+  labs( y = "Gemeinde",
+        x = "Hebesätze",
+        title = "Grundsteuer und Gewerbesteuer Hebesätze") +
+  theme(legend.position = "bottom",
+        legend.title = element_blank(),
+        plot.title = element_text(size=10)) 
+
+miete <- gesamtdatensatz |>
+  filter( aktueller_mietpreis != 0 ) |> 
+  select(regio_name, aktueller_mietpreis) |>  
+  ggplot(aes(x=aktueller_mietpreis, y= fct_reorder(regio_name, desc(aktueller_mietpreis)))) +
+  geom_bar(stat="identity", position = "dodge") +
+  geom_vline(aes(xintercept= gesamtdatensatz |> filter( aktueller_mietpreis != 0 ) |> select(aktueller_mietpreis) |> summarise(mean(aktueller_mietpreis, na.rm = T)) |> pull() ), col="darkred") +
+  labs( y = NULL,
+        x = "Aktueller Mietpreis",
+        title = "Aktueller Mietpreis (Kaltmiete)",
+        caption = "Für Berghülen und Schnürpflingen sind\nkeine Mietpreise verfügbar,\ndaher werden diese nicht dargestellt") +
+  theme(legend.position = "bottom",
+        plot.title = element_text(size=10))
+
+ggarrange(hebesatz, miete, nrow = 1)
+```
+
+### **Pendlersaldo**
+
+```{r}
+Karte_Ulm <- gesamtdatensatz |>
+    mutate(pendlersaldo_uber_gemeindegrenze = ifelse(regio_name == "Ulm, Stadtkreis", 3810, pendlersaldo_uber_gemeindegrenze)) |>
+    left_join(Karte_Gemeinden, by= c("ags"="AGS")) |> 
+    mutate(aelter74 = factor(case_when(
+    insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre - insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr < 500 ~ "< 500",
+        insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre - insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr> 500 & insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre - insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr <= 1000 ~ "500 - 1000",
+        insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre - insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr> 1000 & insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre - insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr <= 1500 ~ "1000 - 1500",
+    insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre - insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr> 1500 & insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre - insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr <= 2000 ~ "1500 - 2000",
+    insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre - insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr > 2000 & insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre - insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr <= 2500 ~ "2000 - 2500",
+    insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre - insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr > 2.500 & insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre - insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr <= 3000 ~ "2500 - 3000",
+    insgesamt_altersgruppen_unter_3_bis_75_u_m_65_bis_unter_75_jahre - insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr > 3000  ~ "> 3000"), levels = c("< 500", "500 - 1000", "1000 - 1500", "1500 - 2000","2000 - 2500", "2500 - 3000","> 3000"), ordered = T)) |>
+      mutate(pendlersaldo = factor(case_when(
+    pendlersaldo_uber_gemeindegrenze < -3000 ~ "< -3000",
+    pendlersaldo_uber_gemeindegrenze> -3000 & pendlersaldo_uber_gemeindegrenze <= -2000 ~ "-3000 - -2000",
+    pendlersaldo_uber_gemeindegrenze> -2000 & pendlersaldo_uber_gemeindegrenze <= -1000 ~ "-2000 - -1000",
+        pendlersaldo_uber_gemeindegrenze> -1000 & pendlersaldo_uber_gemeindegrenze <= 0 ~ "-1000 - 0",
+    pendlersaldo_uber_gemeindegrenze> 0 & pendlersaldo_uber_gemeindegrenze <= 1000 ~ "0 - 1000",
+    pendlersaldo_uber_gemeindegrenze > 1000 ~ "> 1000"), levels = c("< -3000", "-3000 - -2000", "-2000 - -1000", "-1000 - 0", "0 - 1000", "> 1000"), ordered = T)) |>
+  mutate(arbeitslose = factor(case_when(
+    (arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert) <= 50 ~ "0 - 50",
+    (arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert)> 50 & (arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert) <= 100 ~ "50 - 100",
+    (arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert)> 100 & (arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert) <= 150 ~ "100 - 150",
+        (arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert)> 150 & (arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert) <= 200 ~ "150 - 200",
+    (arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert)> 200 & (arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert) <= 250 ~ "200 - 250",
+    (arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert) > 250 & (arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert) <= 300 ~ "250 - 300",
+    (arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert) > 300  ~ "> 300"), levels = c("0 - 50", "50 - 100", "100 - 150", "150 - 200", "200 - 250", "250 - 300","> 300"), ordered = T))
+
+
+Karte_Pendler <- ggplot(
+  # define main data source
+  data = Karte_Ulm, aes(text = paste0(regio_name, "<br>", "Pendlersaldo: ", pendlersaldo_uber_gemeindegrenze))
+) +
+  geom_sf(
+    mapping = aes(
+      fill = pendlersaldo,
+      geometry = geometry,
+    ),
+    color = "white",
+    size = 0.1
+  ) +
+  geom_sf_text(aes(label=GEN, geometry=geometry), size=3) +
+  # use the Viridis color scale
+  scale_fill_viridis_d(
+    option = "inferno",
+    name = "Pendlersaldo",
+    alpha = 0.8, 
+    begin = 0.1,
+    end = 0.9,
+    direction = 1,
+    guide = guide_legend(reverse = T)) +
+  # add titles
+  labs(x = NULL,
+       y = NULL) +
+  theme_void(base_size = 14) +
+  theme( legend.position = "none")
+
+Karte_AL <- ggplot(
+  # define main data source
+  data = Karte_Ulm, aes(text = paste0(regio_name, "<br>", "Schwerbehinderte Arbeitslose: ", arbeitslose_insgesamt -arbeitslose_und_zwar_schwerbehindert))
+) +
+  geom_sf(
+    mapping = aes(
+      fill = arbeitslose,
+      geometry = geometry
+    ),
+    color = "white",
+    size = 0.1
+  ) +
+  geom_sf_text(aes(label=GEN, geometry=geometry), size=3) +
+  # use the Viridis color scale
+  scale_fill_viridis_d(
+    option = "inferno",
+    name = "Anzahl Arbeitslose",
+    alpha = 0.8, 
+    begin = 0.1,
+    end = 0.9,
+    direction = -1,
+    guide = guide_legend(reverse = F)) +
+  # add titles
+  labs(x = NULL,
+       y = NULL) +
+  theme_void(base_size = 14) +
+  theme( legend.position = "none")
+
+
+plotly_pendler <- plotly::ggplotly(Karte_Pendler)
+
+plotly_alo <- plotly::ggplotly(Karte_AL)
+
+plotly_pendler
+
+```
+
+
+### **Arbeitslose ohne Schwerbehinderung**
+
+```{r}
+plotly_alo
+```
+
+
+Row {data-height=650}
+-------------------------------------
+
+### **Korrelation unterschiedlicher Variablen**
+
+Nachdem die Studierenden nun verschiedene Einflussgrößen einzeln betrachtet haben, sollten sie noch unterschiedliche Variablen im Zusammenspiel anschauen. Dafür nutzten die Studierenden ein Streudiagramm und haben den Pendlersaldo auf der x-Achse und den Mietpreis auf der y-Achse abgetragen. Weiterhin macht die Größe der einzelnen Punkt für jede Gemeinde deutlich, wie viele Personen älter als 75 Jahre in der jeweiligen Gemeinde leben.
+
+```{r}
+library(ggiraph)
+korrelation <- gesamtdatensatz |> 
+  filter( aktueller_mietpreis != 0.00 ) |> 
+  mutate( pendlersaldo_uber_gemeindegrenze = ifelse( regio_name == "Ulm, Stadtkreis", 3810, pendlersaldo_uber_gemeindegrenze)) |> 
+  mutate(alter_kategorie = factor(case_when(insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr < 500 ~ "<500",
+                                     insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr <= 1000 & insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr > 500 ~ "500 - 1000",
+                                     insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr <= 1500 & insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr > 1000 ~ "1000 - 1500",  
+                                     insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr > 1500 ~ ">1500"
+                                     ), levels = c("<500", "500 - 1000", "1000 - 1500", ">1500"))) |>
+  ggplot(aes(x = pendlersaldo_uber_gemeindegrenze, y = aktueller_mietpreis, label = regio_name, color = ifelse( regio_name %in% c("Erbach, Stadt", "Senden, St", "Blaustein, Stadt"), "darkred", "darkgray"))) + 
+  geom_point_interactive(aes(size = alter_kategorie, tooltip = paste("Personen älter als 75:", insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr) , data_id = insgesamt_altersgruppen_unter_3_bis_75_u_m_75_jahre_und_mehr), alpha=0.4) +
+  geom_vline(xintercept = -757, alpha = 0.3) +
+  geom_hline(yintercept = 8.60, alpha = 0.3) +
+  geom_text(aes(label=regio_name),size=2, vjust=3.5, col = "black", position=position_dodge(width=0.9)) +
+  scale_color_identity("Standortbewertung", labels = c("", "Empfehlung")) +
+  scale_size_discrete(range= c(2,11)) +
+  labs( x = "Pendlersaldo",
+       y = "Mietpreis",
+       title = "Bestimmung eines geeigneten Standorts für ein Pflegeheim",
+       size = "Personen älter 75 Jahre",
+       caption = "Die rot eingefärbten Gemeinden bieten einen guten Standort für ein Pflegeheim\nWerte für Ulm waren nicht vorhanden, entsprechen den Werten für Neu-Ulm") +
+  theme(legend.position = "bottom")
+
+ggiraph_cor <- ggiraph(code = {print(korrelation)}, zoom_max = 4, hover_css = "stroke:black;fill:orange;") 
+
+ggiraph_cor
+```
+
+### **Fazit**
+
+Insgesamt haben die Studierenden durch dieses Projekt gesehen, dass viele unterschiedliche Einflussgrößen bei der Standortwahl für ein Pflegeheim zu beachten sind.
+
+Das durchgeführte Projekt war ein erster Einblick in die Datenaufbereitung und deskriptive Analyse. Studierende aus dem 3. Semester im Bachelor Wirtschaftswissenschaften an der Universität Ulm haben dieses Projekt im Rahmen des [Projektkurs Data Science & Business Analytics](https://projektkurs-data-science-ulm2223.netlify.app/) komplett selbstständig in Teams von drei Personen durchgeführt. 
+
+Es kamen viele interessante Ausarbeitungen zustande und wir danken [Exaris Solutions](https://exaris-solutions.de/) für die Zusammenarbeit und die Bereitstellung der Daten!
+
+Kooperationspartner {data-orientation=columns}
+=====================================
+
+### Kooperationspartner
+
+Dieses Projekt wurde im Rahmen des [Projektkurs Data Science & Business Analytics](https://projektkurs-data-science-ulm2223.netlify.app/) im Wintersemester 2022/2023 von Studierenden im Bachelor Wirtschaftswissenschaften an der Universität Ulm durchgeführt.
+
+```{r, out.width='49%'}
+ knitr::include_graphics(c("uni-ulm.png",  "Exaris.png"))
+```
+
+Die Daten für dieses Projekt stellte freundlicherweise [Exaris Solutions](https://exaris-solutions.de/) zur Verfügung.
+
+
